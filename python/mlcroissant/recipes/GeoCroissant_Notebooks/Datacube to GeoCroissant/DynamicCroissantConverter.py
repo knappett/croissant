@@ -7,8 +7,10 @@ dataset stored in Zarr format.
 """
 
 import calendar
+from datetime import date
 import hashlib
 import json
+import re
 from typing import Any, Dict, Optional
 
 import xarray as xr
@@ -19,7 +21,10 @@ class DynamicCroissantConverter:
 
     def __init__(
         self,
-        zarr_url: str = "s3://nasa-power/merra2/temporal/power_merra2_monthly_temporal_utc.zarr/",
+        #zarr_url: str = "/gws/ssde/j25b/eds_ai/high5/users/astephen/zarr-test/ukcp_wind.zarr"
+        zarr_url: str = "/gws/ssde/j25b/eds_ai/public/era5_repack/aggregations/data/ecmwf-era5X_oper_an_sfc_2000_2020_10v_repack.kr1.0.json"
+        #zarr_url: str = "/gws/ssde/j25b/eds_ai/high5/data/processing/padocc/in_progress/era5X/ecmwf-era5X_oper_an_sfc_2000_2020_10v_repack/k1.0a.json"
+        #zarr_url: str = "s3://nasa-power/merra2/temporal/power_merra2_monthly_temporal_utc.zarr/",
     ):
         """Initialize the converter with the Zarr URL.
 
@@ -34,7 +39,9 @@ class DynamicCroissantConverter:
         """Load the full dataset from S3."""
         try:
             print(f"Loading NASA POWER dataset from {self.zarr_url}...")
-            self.ds_full = xr.open_zarr(self.zarr_url, storage_options={"anon": True})
+            self.ds_full = xr.open_dataset(self.zarr_url, engine='kerchunk')
+            #self.ds_full = xr.open_dataset(self.zarr_url, engine='zarr')
+            #self.ds_full = xr.open_zarr(self.zarr_url, storage_options={"anon": True})
             print("Dataset loaded successfully!")
             print(f"  - Dimensions: {self.ds_full.dims}")
             print(f"  - Total size: {self.ds_full.nbytes / 1e9:.2f} GB")
@@ -146,12 +153,15 @@ class DynamicCroissantConverter:
             print("Error: No subset data available. Call subset_data() first.")
             return {}
 
+        # Extract name from zarr store
+        output_name = (self.zarr_url.split('.zarr')[0]).split('/')[-1]
+
         # Generate output filename if not provided
         if not output_file:
             if month:
-                output_file = f"NASA_POWER_{year}_{month:02d}_croissant.json"
+                output_file = f"{output_name}_{year}_{month:02d}_croissant.json"
             else:
-                output_file = f"NASA_POWER_{year}_croissant.json"
+                output_file = f"{output_name}_{year}_croissant.json"
 
         # Generate checksum
         hash_input = f"{self.zarr_url}{year}{month if month else 'year'}"
@@ -217,45 +227,49 @@ class DynamicCroissantConverter:
                 "transform": "cr:transform",
             },
             "@type": "sc:Dataset",
-            "name": f"NASA-POWER-Climate-Data-{description_suffix.replace(' ', '-')}",
+            "name": self.ds_full.attrs.get("title", 'PLACEHOLDER'), #f"NASA-POWER-Climate-Data-{description_suffix.replace(' ', '-')}",
             "alternateName": [
                 f"nasa-power-{year}-{month:02d}" if month else f"nasa-power-{year}",
                 f"POWER-{year}-{month:02d}" if month else f"POWER-{year}",
             ],
             "description": (
-                f"NASA POWER climate dataset {description_suffix}. This dataset"
-                " provides global climate data at 0.5° latitude and 0.625° longitude"
-                " resolution with monthly temporal resolution."
+                self.ds_full.attrs.get("summary", 'PLACEHOLDER')
+                #f"NASA POWER climate dataset {description_suffix}. This dataset"
+                #" provides global climate data at 0.5° latitude and 0.625° longitude"
+                #" resolution with monthly temporal resolution."
             ),
             "conformsTo": "http://mlcommons.org/croissant/1.0",
-            "version": "1.0.0",
+            "version": self.ds_full.attrs.get("version", "product_version"), #"1.0.0",
             "creator": {
                 "@type": "Organization",
-                "name": "NASA Langley Research Center (LaRC)",
-                "url": "https://power.larc.nasa.gov",
+                "name": self.ds_full.attrs.get("institution", 'PLACEHOLDER'), #"NASA Langley Research Center (LaRC)",
+                "url": self.ds_full.attrs.get("creator_url", 'PLACEHOLDER'), #"https://power.larc.nasa.gov",
             },
-            "url": "https://power.larc.nasa.gov",
-            "keywords": [
-                "Climate",
-                "NASA",
-                "POWER",
-                str(year),
-                "Monthly" if month else "Annual",
-                "Geospatial",
-                "Earth Science",
-                "Meteorology",
-                "Climate Data",
-            ],
+            "url": self.ds_full.attrs.get("creator_url", 'PLACEHOLDER'), #"https://power.larc.nasa.gov",
+            "keywords": re.split(r'[/,]+', self.ds_full.attrs.get("keywords", "placeholder")),
+            #[
+            #    "Climate",
+            #    "NASA",
+            #    "POWER",
+            #    str(year),
+            #    "Monthly" if month else "Annual",
+            #    "Geospatial",
+            #    "Earth Science",
+            #    "Meteorology",
+            #    "Climate Data",
+            #],
             "citeAs": (
-                "NASA POWER Project. Prediction Of Worldwide Energy Resource (POWER)"
-                " Project. NASA Langley Research Center."
+                f"{self.ds_full.attrs.get("project")}. {self.ds_full.attrs.get("institution")}"
+                #"NASA POWER Project. Prediction Of Worldwide Energy Resource (POWER)"
+                #" Project. NASA Langley Research Center."
             ),
-            "datePublished": (
-                f"{year}-12-31"
-                if not month
-                else f"{year}-{month:02d}-{calendar.monthrange(year, month)[1]}"
-            ),
-            "license": "https://creativecommons.org/licenses/by/4.0/",
+            "datePublished": date.today().strftime('%Y-%m-%d'),
+            #(
+            #    f"{year}-12-31"
+            #    if not month
+            #    else f"{year}-{month:02d}-{calendar.monthrange(year, month)[1]}"
+            #),
+            "license": self.ds_full.attrs.get("license", f"Contact {self.ds_full.attrs.get("institution")} for license details."), #"https://creativecommons.org/licenses/by/4.0/",
             "geocr:BoundingBox": [
                 self.ds_full.attrs.get("geospatial_lon_min", -180.0),
                 self.ds_full.attrs.get("geospatial_lat_min", -90.0),
@@ -263,14 +277,14 @@ class DynamicCroissantConverter:
                 self.ds_full.attrs.get("geospatial_lat_max", 90.0),
             ],
             "geocr:temporalExtent": {"startDate": start_date, "endDate": end_date},
-            "geocr:spatialResolution": "0.5° lat × 0.625° lon",
-            "geocr:coordinateReferenceSystem": "EPSG:4326",
-            "geocr:mlTask": {
-                "@type": "geocr:Regression",
-                "taskType": "climate_prediction",
-                "evaluationMetric": "RMSE",
-                "applicationDomain": "climate_monitoring",
-            },
+            "geocr:spatialResolution": f"{self.ds_full.attrs.get("geospatial_lat_resolution")} lat x {self.ds_full.attrs.get("geospatial_lon_resolution")} lon", #"0.5° lat × 0.625° lon",
+            #"geocr:coordinateReferenceSystem": "EPSG:4326",
+            #"geocr:mlTask": {
+            #    "@type": "geocr:Regression",
+            #    "taskType": "climate_prediction",
+            #    "evaluationMetric": "RMSE",
+            #    "applicationDomain": "climate_monitoring",
+            #},
             "distribution": [
                 {
                     "@type": "cr:FileObject",
@@ -285,7 +299,7 @@ class DynamicCroissantConverter:
                         else f"zarr-store-{year}"
                     ),
                     "description": (
-                        f"Zarr datacube for NASA POWER data {description_suffix}"
+                        f"Zarr datacube for {self.ds_full.attrs.get("title")} data {description_suffix}"
                     ),
                     "contentUrl": self.zarr_url,
                     "encodingFormat": "application/x-zarr",
@@ -296,16 +310,16 @@ class DynamicCroissantConverter:
                 {
                     "@type": "cr:RecordSet",
                     "@id": (
-                        f"nasa_power_data_{year}_{month:02d}"
+                        f"{output_name}_data_{year}_{month:02d}"
                         if month
-                        else f"nasa_power_data_{year}"
+                        else f"{output_name}_data_{year}"
                     ),
                     "name": (
-                        f"nasa_power_data_{year}_{month:02d}"
+                        f"{output_name}_data_{year}_{month:02d}"
                         if month
-                        else f"nasa_power_data_{year}"
+                        else f"{output_name}_data_{year}"
                     ),
-                    "description": f"NASA POWER climate data {description_suffix}",
+                    "description": f"{self.ds_full.attrs.get("title")} data {description_suffix}",
                     "field": [],
                 }
             ],
@@ -319,14 +333,14 @@ class DynamicCroissantConverter:
             coord_field = {
                 "@type": "cr:Field",
                 "@id": (
-                    f"nasa_power_data_{year}_{month:02d}/{coord_name}"
+                    f"{output_name}_data_{year}_{month:02d}/{coord_name}"
                     if month
-                    else f"nasa_power_data_{year}/{coord_name}"
+                    else f"{output_name}_data_{year}/{coord_name}"
                 ),
                 "name": (
-                    f"nasa_power_data_{year}_{month:02d}/{coord_name}"
+                    f"{output_name}_data_{year}_{month:02d}/{coord_name}"
                     if month
-                    else f"nasa_power_data_{year}/{coord_name}"
+                    else f"{output_name}_data_{year}/{coord_name}"
                 ),
                 "description": f"Coordinate: {coord_name}",
                 "dataType": "sc:Float" if coord.dtype.kind == "f" else "sc:Date",
@@ -372,14 +386,14 @@ class DynamicCroissantConverter:
             var_field = {
                 "@type": "cr:Field",
                 "@id": (
-                    f"nasa_power_data_{year}_{month:02d}/{var_name}"
+                    f"{output_name}_data_{year}_{month:02d}/{var_name}"
                     if month
-                    else f"nasa_power_data_{year}/{var_name}"
+                    else f"{output_name}_data_{year}/{var_name}"
                 ),
                 "name": (
-                    f"nasa_power_data_{year}_{month:02d}/{var_name}"
+                    f"{output_name}_data_{year}_{month:02d}/{var_name}"
                     if month
-                    else f"nasa_power_data_{year}/{var_name}"
+                    else f"{output_name}_data_{year}/{var_name}"
                 ),
                 "description": var.attrs.get("long_name", var_name),
                 "dataType": "sc:Float",
@@ -457,3 +471,8 @@ class DynamicCroissantConverter:
 
         print("Conversion completed successfully!")
         return metadata
+
+converter = DynamicCroissantConverter()
+year=2019
+month=8
+converter.convert(year=year, month=month)
